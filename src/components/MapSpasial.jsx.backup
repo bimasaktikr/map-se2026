@@ -1,0 +1,240 @@
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
+import { Map as MapIcon, Filter, Search, MapPin } from 'lucide-react';
+
+// 🌟 TARIK API KEY DARI .ENV
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
+
+export default function MapSpasial() {
+  const mapContainer = useRef(null);
+  const map = useRef(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+
+  // 🌟 STATE DATABASE 
+  const [dataTitik, setDataTitik] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // State Filter
+  const [showUsaha, setShowUsaha] = useState(true);
+  const [showRumahTangga, setShowRumahTangga] = useState(true);
+
+  // 🌐 LANGKAH 1: TARIK DATA DARI DATABASE (API BACKEND)
+  useEffect(() => {
+    const fetchDatabase = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/v1/maps/get-titik-tematik', {
+          method: 'GET', // 🌟 DIKEMBALIKAN KE POST SESUAI KEBUTUHAN FASTAPI
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          // body: JSON.stringify({}) // Buka jika butuh kirim payload ke API
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        const dataDariApi = result.data || result;
+        
+        // 🛡️ PENGAMAN ANTI-BLANK (Hanya masukkan ke state jika formatnya Array)
+        setDataTitik(Array.isArray(dataDariApi) ? dataDariApi : []);
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Gagal menarik data dari database:", error);
+        setDataTitik([]); // Reset ke array kosong agar tidak error
+        setIsLoading(false);
+      }
+    };
+
+    fetchDatabase();
+  }, []);
+
+  // 🔄 LANGKAH 2: FILTER LOGIC & KONVERSI DATA DATABASE KE GEOJSON
+  const geojsonData = useMemo(() => {
+    // 🛡️ PENGAMAN: Pastikan dataTitik adalah array sebelum di-filter
+    if (!Array.isArray(dataTitik)) return { type: 'FeatureCollection', features: [] };
+
+    const filtered = dataTitik.filter(point => {
+      // Sesuaikan nama field 'type' dengan struktur dari database API Bosku
+      if (point.type === 'usaha' && !showUsaha) return false;
+      if (point.type === 'rumahtangga' && !showRumahTangga) return false;
+      return true;
+    });
+
+    return {
+      type: 'FeatureCollection',
+      features: filtered.map(p => ({
+        type: 'Feature',
+        geometry: { 
+          type: 'Point', 
+          // 🛡️ PENGAMAN KOORDINAT: Paksa jadi angka, amankan nama key-nya
+          coordinates: [
+            parseFloat(p.lng || p.longitude || 0), 
+            parseFloat(p.lat || p.latitude || 0)
+          ] 
+        },
+        properties: { ...p }
+      }))
+    };
+  }, [dataTitik, showUsaha, showRumahTangga]); 
+
+  // 🚀 LANGKAH 3: INISIALISASI PETA 3D (Hanya jalan 1 kali)
+  useEffect(() => {
+    if (map.current) return; 
+
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/light-v11',
+      center: [112.6214, -7.9839], 
+      zoom: 15,
+      pitch: 60, // 🌟 MENGAKTIFKAN SUDUT PANDANG 3D
+      bearing: -20,
+      antialias: true 
+    });
+
+    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    map.current.on('load', () => {
+      setMapLoaded(true);
+
+      // 🏙️ A. LAYER GEDUNG 3D
+      map.current.addLayer({
+        'id': '3d-buildings',
+        'source': 'composite',
+        'source-layer': 'building',
+        'filter': ['==', 'extrude', 'true'],
+        'type': 'fill-extrusion',
+        'minzoom': 15,
+        'paint': {
+          'fill-extrusion-color': '#e2e8f0',
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-base': ['get', 'min_height'],
+          'fill-extrusion-opacity': 0.8
+        }
+      });
+
+      // 📍 B. SOURCE DATA TITIK (Diambil dari useMemo)
+      map.current.addSource('data-se2026', {
+        type: 'geojson',
+        data: geojsonData 
+      });
+
+      // 🎨 C. LAYER VISUAL TITIK
+      map.current.addLayer({
+        'id': 'titik-se2026',
+        'type': 'circle',
+        'source': 'data-se2026',
+        'paint': {
+          'circle-radius': 6,
+          'circle-color': [
+            'match',
+            ['get', 'type'], // Pastikan nama key-nya sesuai dari API
+            'usaha', '#f97316',      // Oranye 
+            'rumahtangga', '#10b981',// Hijau 
+            '#3b82f6'                // Biru (Default jika tidak cocok)
+          ],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff'
+        }
+      });
+
+      // 👆 D. INTERAKSI KLIK (POPUP)
+      map.current.on('click', 'titik-se2026', (e) => {
+        if (!e.features.length) return;
+        
+        const coordinates = e.features[0].geometry.coordinates.slice();
+        const { nama, alamat, type } = e.features[0].properties;
+        
+        // Amankan nilai undefined dari API
+        const displayNama = nama || "Nama Tidak Tersedia";
+        const displayAlamat = alamat || "Alamat belum diisi";
+        
+        const typeLabel = type === 'usaha' ? 'Titik Usaha' : 'Rumah Tangga';
+        const colorClass = type === 'usaha' ? 'color: #f97316;' : 'color: #10b981;';
+
+        const popupHTML = `
+          <div style="padding: 4px;">
+            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; ${colorClass}">
+              ${typeLabel}
+            </div>
+            <h3 style="font-weight: 900; color: #1e293b; font-size: 14px; margin: 0 0 4px 0;">${displayNama}</h3>
+            <p style="font-size: 12px; color: #64748b; margin: 0;">${displayAlamat}</p>
+          </div>
+        `;
+
+        new mapboxgl.Popup()
+          .setLngLat(coordinates)
+          .setHTML(popupHTML)
+          .addTo(map.current);
+      });
+
+      // Hover Kursor
+      map.current.on('mouseenter', 'titik-se2026', () => {
+        map.current.getCanvas().style.cursor = 'pointer';
+      });
+      map.current.on('mouseleave', 'titik-se2026', () => {
+        map.current.getCanvas().style.cursor = '';
+      });
+    });
+  }, []);
+
+  // 🔄 LANGKAH 4: UPDATE DATA DI PETA SAAT FILTER/API BERUBAH
+  useEffect(() => {
+    if (mapLoaded && map.current.getSource('data-se2026')) {
+      map.current.getSource('data-se2026').setData(geojsonData);
+    }
+  }, [geojsonData, mapLoaded]);
+
+  return (
+    <div className="flex flex-col md:flex-row w-full h-full min-h-screen bg-slate-100 p-4 font-sans">
+      {/* 🌟 PANEL KIRI (SIDEBAR FILTER) */}
+      <div className="w-full md:w-80 bg-white border border-slate-200 flex flex-col shrink-0 z-10 shadow-lg rounded-l-2xl overflow-hidden">
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-xl text-white shadow-md shadow-blue-600/20">
+              <MapIcon size={20} />
+            </div>
+            <div>
+              <h2 className="font-black text-sm text-slate-800 tracking-tight">COMMAND CENTER</h2>
+              <p className="text-[10px] text-slate-400 font-semibold">Pemantauan Spasial 3D</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5 flex-1 overflow-y-auto space-y-6">
+          {/* INDIKATOR LOADING DATA */}
+          {isLoading && (
+            <div className="text-xs text-blue-600 font-bold bg-blue-50 p-3 rounded-xl border border-blue-100 animate-pulse">
+              Sedang menarik data dari database...
+            </div>
+          )}
+
+          {/* TOGGLE LAYER */}
+          <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700">Titik Usaha</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" className="sr-only peer" checked={showUsaha} onChange={() => setShowUsaha(!showUsaha)} />
+                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
+              </label>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700">Titik Rumah Tangga</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" className="sr-only peer" checked={showRumahTangga} onChange={() => setShowRumahTangga(!showRumahTangga)} />
+                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 🌟 PANEL KANAN (MAP CONTAINER) */}
+      <div className="flex-1 h-[80vh] md:h-auto w-full relative border border-slate-200 rounded-r-2xl overflow-hidden shadow-lg">
+        <div ref={mapContainer} className="w-full h-full absolute inset-0" />
+      </div>
+    </div>
+  );
+}
