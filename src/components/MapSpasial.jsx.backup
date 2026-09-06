@@ -15,7 +15,7 @@ export default function MapSpasial() {
   const [dataTitik, setDataTitik] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // State Filter
+  // State Filter (Opsional: Nanti bisa disesuaikan dengan nilai status_alias yang ada)
   const [showUsaha, setShowUsaha] = useState(true);
   const [showRumahTangga, setShowRumahTangga] = useState(true);
 
@@ -24,11 +24,10 @@ export default function MapSpasial() {
     const fetchDatabase = async () => {
       try {
         const response = await fetch('http://localhost:8000/api/v1/maps/get-titik-tematik', {
-          method: 'GET', // 🌟 DIKEMBALIKAN KE POST SESUAI KEBUTUHAN FASTAPI
+          method: 'GET', 
           headers: {
             'Content-Type': 'application/json',
           },
-          // body: JSON.stringify({}) // Buka jika butuh kirim payload ke API
         });
 
         if (!response.ok) {
@@ -38,12 +37,11 @@ export default function MapSpasial() {
         const result = await response.json();
         const dataDariApi = result.data || result;
         
-        // 🛡️ PENGAMAN ANTI-BLANK (Hanya masukkan ke state jika formatnya Array)
         setDataTitik(Array.isArray(dataDariApi) ? dataDariApi : []);
         setIsLoading(false);
       } catch (error) {
         console.error("Gagal menarik data dari database:", error);
-        setDataTitik([]); // Reset ke array kosong agar tidak error
+        setDataTitik([]); 
         setIsLoading(false);
       }
     };
@@ -51,15 +49,15 @@ export default function MapSpasial() {
     fetchDatabase();
   }, []);
 
-  // 🔄 LANGKAH 2: FILTER LOGIC & KONVERSI DATA DATABASE KE GEOJSON
+  // 🔄 LANGKAH 2: KONVERSI DATA DATABASE KE GEOJSON
   const geojsonData = useMemo(() => {
-    // 🛡️ PENGAMAN: Pastikan dataTitik adalah array sebelum di-filter
     if (!Array.isArray(dataTitik)) return { type: 'FeatureCollection', features: [] };
 
     const filtered = dataTitik.filter(point => {
-      // Sesuaikan nama field 'type' dengan struktur dari database API Bosku
-      if (point.type === 'usaha' && !showUsaha) return false;
-      if (point.type === 'rumahtangga' && !showRumahTangga) return false;
+      // 💡 CATATAN BOSKU: 
+      // Karena dari API tidak ada field 'type', filter ini sementara saya loloskan semua.
+      // Kalau Bosku mau memfilter berdasarkan status, bisa ganti logika di bawah ini
+      // contoh: if (point.status_alias === 'Aktif' && !showUsaha) return false;
       return true;
     });
 
@@ -69,10 +67,10 @@ export default function MapSpasial() {
         type: 'Feature',
         geometry: { 
           type: 'Point', 
-          // 🛡️ PENGAMAN KOORDINAT: Paksa jadi angka, amankan nama key-nya
+          // 🌟 SUDAH DISESUAIKAN DENGAN API: p.longitude & p.latitude
           coordinates: [
-            parseFloat(p.lng || p.longitude || 0), 
-            parseFloat(p.lat || p.latitude || 0)
+            parseFloat(p.longitude || 0), 
+            parseFloat(p.latitude || 0)
           ] 
         },
         properties: { ...p }
@@ -80,7 +78,7 @@ export default function MapSpasial() {
     };
   }, [dataTitik, showUsaha, showRumahTangga]); 
 
-  // 🚀 LANGKAH 3: INISIALISASI PETA 3D (Hanya jalan 1 kali)
+  // 🚀 LANGKAH 3: INISIALISASI PETA 3D
   useEffect(() => {
     if (map.current) return; 
 
@@ -89,7 +87,7 @@ export default function MapSpasial() {
       style: 'mapbox://styles/mapbox/light-v11',
       center: [112.6214, -7.9839], 
       zoom: 15,
-      pitch: 60, // 🌟 MENGAKTIFKAN SUDUT PANDANG 3D
+      pitch: 60, 
       bearing: -20,
       antialias: true 
     });
@@ -115,7 +113,7 @@ export default function MapSpasial() {
         }
       });
 
-      // 📍 B. SOURCE DATA TITIK (Diambil dari useMemo)
+      // 📍 B. SOURCE DATA TITIK
       map.current.addSource('data-se2026', {
         type: 'geojson',
         data: geojsonData 
@@ -128,36 +126,35 @@ export default function MapSpasial() {
         'source': 'data-se2026',
         'paint': {
           'circle-radius': 6,
+          // 🌟 WARNA DISESUAIKAN: Menggunakan status_alias
           'circle-color': [
             'match',
-            ['get', 'type'], // Pastikan nama key-nya sesuai dari API
-            'usaha', '#f97316',      // Oranye 
-            'rumahtangga', '#10b981',// Hijau 
-            '#3b82f6'                // Biru (Default jika tidak cocok)
+            ['get', 'status_alias'], // Acuan warnanya sekarang status_alias
+            'selesai', '#10b981',    // Hijau jika statusnya selesai (contoh)
+            'proses', '#f97316',     // Oranye jika proses (contoh)
+            '#3b82f6'                // Biru (Default)
           ],
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff'
         }
       });
 
-      // 👆 D. INTERAKSI KLIK (POPUP)
+      // 👆 D. INTERAKSI KLIK (POPUP) - DISESUAIKAN DENGAN FIELD API BARU
       map.current.on('click', 'titik-se2026', (e) => {
         if (!e.features.length) return;
         
         const coordinates = e.features[0].geometry.coordinates.slice();
-        const { nama, alamat, type } = e.features[0].properties;
+        // 🌟 TARIK DATA SESUAI HASIL QUERY API BOSKU
+        const { nama_usaha, alamat, nomor_bangunan, status_alias, region_code } = e.features[0].properties;
         
-        // Amankan nilai undefined dari API
-        const displayNama = nama || "Nama Tidak Tersedia";
-        const displayAlamat = alamat || "Alamat belum diisi";
-        
-        const typeLabel = type === 'usaha' ? 'Titik Usaha' : 'Rumah Tangga';
-        const colorClass = type === 'usaha' ? 'color: #f97316;' : 'color: #10b981;';
+        const displayNama = nama_usaha || "Nama Usaha Tidak Tersedia";
+        const displayAlamat = alamat ? `${alamat} (No. ${nomor_bangunan || '-'})` : "Alamat belum diisi";
+        const displayStatus = status_alias || "Status Belum Diketahui";
 
         const popupHTML = `
           <div style="padding: 4px;">
-            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; ${colorClass}">
-              ${typeLabel}
+            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; color: #f97316;">
+              STATUS: ${displayStatus} | REGION: ${region_code}
             </div>
             <h3 style="font-weight: 900; color: #1e293b; font-size: 14px; margin: 0 0 4px 0;">${displayNama}</h3>
             <p style="font-size: 12px; color: #64748b; margin: 0;">${displayAlamat}</p>
@@ -170,7 +167,6 @@ export default function MapSpasial() {
           .addTo(map.current);
       });
 
-      // Hover Kursor
       map.current.on('mouseenter', 'titik-se2026', () => {
         map.current.getCanvas().style.cursor = 'pointer';
       });
@@ -180,7 +176,7 @@ export default function MapSpasial() {
     });
   }, []);
 
-  // 🔄 LANGKAH 4: UPDATE DATA DI PETA SAAT FILTER/API BERUBAH
+  // 🔄 LANGKAH 4: UPDATE DATA DI PETA SAAT API BERUBAH
   useEffect(() => {
     if (mapLoaded && map.current.getSource('data-se2026')) {
       map.current.getSource('data-se2026').setData(geojsonData);
@@ -204,7 +200,6 @@ export default function MapSpasial() {
         </div>
 
         <div className="p-5 flex-1 overflow-y-auto space-y-6">
-          {/* INDIKATOR LOADING DATA */}
           {isLoading && (
             <div className="text-xs text-blue-600 font-bold bg-blue-50 p-3 rounded-xl border border-blue-100 animate-pulse">
               Sedang menarik data dari database...
@@ -214,17 +209,10 @@ export default function MapSpasial() {
           {/* TOGGLE LAYER */}
           <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700">Titik Usaha</span>
+              <span className="text-xs font-bold text-slate-700">Tampilkan Data</span>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" className="sr-only peer" checked={showUsaha} onChange={() => setShowUsaha(!showUsaha)} />
-                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
-              </label>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700">Titik Rumah Tangga</span>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" className="sr-only peer" checked={showRumahTangga} onChange={() => setShowRumahTangga(!showRumahTangga)} />
-                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
               </label>
             </div>
           </div>
