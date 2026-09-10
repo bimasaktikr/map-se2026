@@ -18,7 +18,7 @@ export default function MapSpasial() {
   const [password, setPassword] = useState('');
   const [errorLogin, setErrorLogin] = useState('');
   const [isLoadingLogin, setIsLoadingLogin] = useState(false);
-
+  const [listKecamatan, setListKecamatan] = useState([]); // Pastikan inisialisasi []
   // =========================================================================
   // 🗺️ 2. STATE MAPBOX & DATABASE SPASIAL
   // =========================================================================
@@ -51,6 +51,7 @@ export default function MapSpasial() {
 
     try {
       const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      
       const response = await fetch(`${API_URL}/api/v1/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
