@@ -4,12 +4,11 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { Map as MapIcon, Database, AlertTriangle, LogOut, Info } from 'lucide-react';
 import axios from 'axios';
 
-// 🌟 TARIK API KEY DARI .ENV
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
 export default function MapSpasial() {
   // =========================================================================
-  // 🔐 1. STATE AUTHENTICATION (LOGIN KHUSUS PETUGAS)
+  // 1. STATE AUTHENTICATION
   // =========================================================================
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     return localStorage.getItem('petugas_auth') === 'true';
@@ -18,9 +17,9 @@ export default function MapSpasial() {
   const [password, setPassword] = useState('');
   const [errorLogin, setErrorLogin] = useState('');
   const [isLoadingLogin, setIsLoadingLogin] = useState(false);
-  const [listKecamatan, setListKecamatan] = useState([]); // Pastikan inisialisasi []
+
   // =========================================================================
-  // 🗺️ 2. STATE MAPBOX & DATABASE SPASIAL
+  // 2. STATE MAPBOX & DATABASE SPASIAL
   // =========================================================================
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -28,10 +27,10 @@ export default function MapSpasial() {
 
   const [dataTitik, setDataTitik] = useState([]);
   const [batasWilayah, setBatasWilayah] = useState(null);
-  const [isLoading, setIsLoading] = useState(false); 
+  const [isLoading, setIsLoading] = useState(false);
 
   // =========================================================================
-  // 🗂️ 3. STATE MASTER WILAYAH & FILTER
+  // 3. STATE MASTER WILAYAH & FILTER
   // =========================================================================
   const [listKecamatan, setListKecamatan] = useState([]);
   const [listKelurahan, setListKelurahan] = useState([]);
@@ -42,7 +41,7 @@ export default function MapSpasial() {
   const [selectedSls, setSelectedSls] = useState('');
 
   // =========================================================================
-  // 🚀 4. FUNGSI EKSEKUSI LOGIN API
+  // 4. AUTENTIKASI MASUK & KELUAR
   // =========================================================================
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -51,7 +50,6 @@ export default function MapSpasial() {
 
     try {
       const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      
       const response = await fetch(`${API_URL}/api/v1/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,8 +65,8 @@ export default function MapSpasial() {
         setErrorLogin(data.detail || 'Akses Ditolak! Username atau Password salah.');
       }
     } catch (error) {
-      console.error("Gagal menghubungi markas:", error);
-      setErrorLogin('Gagal terhubung ke server backend! Pastikan server menyala.');
+      console.error('Gagal menghubungi backend:', error);
+      setErrorLogin('Gagal terhubung ke server backend. Pastikan service API berjalan.');
     } finally {
       setIsLoadingLogin(false);
     }
@@ -76,20 +74,26 @@ export default function MapSpasial() {
 
   const handleLogout = () => {
     localStorage.removeItem('petugas_auth');
+    if (map.current) {
+      map.current.remove();
+      map.current = null;
+    }
+    setMapLoaded(false);
     setIsLoggedIn(false);
   };
 
   // =========================================================================
-  // 🌐 5. FUNGSI TARIK DATA WILAYAH & BATAS
+  // 5. FETCH DATA WILAYAH AWAL
   // =========================================================================
   useEffect(() => {
-    if (!isLoggedIn) return; 
-    
+    if (!isLoggedIn) return;
+
     const fetchInitialData = async () => {
       try {
         const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
         const resKec = await axios.get(`${API_URL}/api/v1/maps/get-list-kecamatan`);
-        setListKecamatan(resKec.data || []);
+        const dataKec = Array.isArray(resKec.data) ? resKec.data : (resKec.data?.data || []);
+        setListKecamatan(dataKec);
 
         const resBatas = await fetch('/batas_sls.geojson');
         if (resBatas.ok) {
@@ -97,29 +101,31 @@ export default function MapSpasial() {
           setBatasWilayah(batas);
         }
       } catch (error) {
-        console.error("Radar gagal memuat data awal:", error);
+        console.error('Radar gagal memuat data awal:', error);
       }
     };
+
     fetchInitialData();
   }, [isLoggedIn]);
 
   const handleKecamatanChange = async (e) => {
     const kdkec = e.target.value;
     setSelectedKdkec(kdkec);
-    
-    setSelectedIddesa(''); 
+
+    setSelectedIddesa('');
     setSelectedSls('');
     setListKelurahan([]);
     setListSlsApi([]);
-    setDataTitik([]); 
+    setDataTitik([]);
 
     if (kdkec) {
       try {
         const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
         const resKel = await axios.get(`${API_URL}/api/v1/maps/get-list-kelurahan/${kdkec}`);
-        setListKelurahan(resKel.data || []);
+        const dataKel = Array.isArray(resKel.data) ? resKel.data : (resKel.data?.data || []);
+        setListKelurahan(dataKel);
       } catch (error) {
-        console.error("Gagal memuat master kelurahan:", error);
+        console.error('Gagal memuat master kelurahan:', error);
       }
     }
   };
@@ -134,32 +140,33 @@ export default function MapSpasial() {
       try {
         const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
         const res = await axios.get(`${API_URL}/api/v1/maps/get-list-sls/${selectedIddesa}`);
-        
-        const sortedData = (res.data || []).sort((a, b) => {
-          const namaA = a.nmsls || "";
-          const namaB = b.nmsls || "";
+        const rawData = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+
+        const sortedData = [...rawData].sort((a, b) => {
+          const namaA = a.nmsls || '';
+          const namaB = b.nmsls || '';
           return namaA.localeCompare(namaB, 'id', { numeric: true });
         });
 
         setListSlsApi(sortedData);
       } catch (err) {
-        console.error("Gagal memuat daftar SLS:", err);
+        console.error('Gagal memuat daftar SLS:', err);
       }
     };
+
     fetchSlsList();
   }, [selectedIddesa]);
 
   // =========================================================================
-  // 🔄 6. MESIN PENGELOMPOKAN SLS BERDASARKAN RW 
+  // 6. PENGELOMPOKAN SLS BERDASARKAN RW
   // =========================================================================
   const groupedSlsList = useMemo(() => {
-    if (!listSlsApi || listSlsApi.length === 0) return [];
+    if (!Array.isArray(listSlsApi) || listSlsApi.length === 0) return [];
 
     const groups = {};
-    
-    listSlsApi.forEach(sls => {
-      const namaSls = sls.nmsls || "";
-      let rwGroup = "Lainnya (Tanpa RW)"; 
+    listSlsApi.forEach((sls) => {
+      const namaSls = sls.nmsls || '';
+      let rwGroup = 'Lainnya (Tanpa RW)';
 
       const match = namaSls.match(/(RW\s*\d+)/i);
       if (match) {
@@ -172,22 +179,22 @@ export default function MapSpasial() {
       groups[rwGroup].push(sls);
     });
 
-    const sortedRwKeys = Object.keys(groups).sort((a, b) => 
+    const sortedRwKeys = Object.keys(groups).sort((a, b) =>
       a.localeCompare(b, 'id', { numeric: true })
     );
 
-    return sortedRwKeys.map(key => ({
+    return sortedRwKeys.map((key) => ({
       rwLabel: key,
-      items: groups[key] 
+      items: groups[key]
     }));
   }, [listSlsApi]);
 
   // =========================================================================
-  // 🚀 7. TOMBOL MUAT DATA SPASIAL
+  // 7. TARIK DATA TITIK SPASIAL
   // =========================================================================
   const handleMuatData = async () => {
     if (!selectedIddesa) {
-      alert("Komandan, mohon pilih Desa/Kelurahan terlebih dahulu!");
+      alert('Mohon pilih Desa/Kelurahan terlebih dahulu.');
       return;
     }
 
@@ -195,38 +202,45 @@ export default function MapSpasial() {
     try {
       const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
       const response = await axios.get(`${API_URL}/api/v1/maps/get-titik-tematik?iddesa=${selectedIddesa}`);
-      
-      const dataDariApi = response.data.data || response.data;
+      const dataDariApi = response.data?.data || response.data;
       setDataTitik(Array.isArray(dataDariApi) ? dataDariApi : []);
     } catch (error) {
-      console.error("Gagal menarik data titik:", error);
+      console.error('Gagal menarik data titik:', error);
       setDataTitik([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 🌟 PISAHKAN FILTERED TITIK AGAR BISA DIPAKAI MESIN DETEKTIF
   const filteredTitik = useMemo(() => {
     if (!Array.isArray(dataTitik)) return [];
-    return selectedSls 
-      ? dataTitik.filter(p => String(p.region_code || '').startsWith(selectedSls))
+    return selectedSls
+      ? dataTitik.filter((p) => String(p.region_code || '').startsWith(selectedSls))
       : dataTitik;
   }, [dataTitik, selectedSls]);
 
   const geojsonData = useMemo(() => {
+    const validTitik = filteredTitik.filter((p) => {
+      const lng = parseFloat(p.longitude);
+      const lat = parseFloat(p.latitude);
+      return !isNaN(lng) && !isNaN(lat) && lng !== 0 && lat !== 0;
+    });
+
     return {
       type: 'FeatureCollection',
-      features: filteredTitik.map(p => ({
+      features: validTitik.map((p) => ({
         type: 'Feature',
-        geometry: { type: 'Point', coordinates: [parseFloat(p.longitude || 0), parseFloat(p.latitude || 0)] },
+        geometry: {
+          type: 'Point',
+          coordinates: [parseFloat(p.longitude), parseFloat(p.latitude)]
+        },
         properties: { ...p }
       }))
     };
   }, [filteredTitik]);
 
   // =========================================================================
-  // 🕵️ 8. MESIN DETEKTIF NOMOR BANGUNAN (REKAPITULASI)
+  // 8. MESIN REKAPITULASI NOMOR BANGUNAN
   // =========================================================================
   const rekapBangunan = useMemo(() => {
     if (!filteredTitik || filteredTitik.length === 0) {
@@ -237,24 +251,24 @@ export default function MapSpasial() {
     const existSet = new Set();
     let dashCount = 0;
 
-    filteredTitik.forEach(titik => {
-      const numStr = String(titik.nomor_bangunan || "").trim();
-      
-      // Cek apakah kosong atau strip
+    filteredTitik.forEach((titik) => {
+      const numStr = String(titik.nomor_bangunan || '').trim();
+
       if (!numStr || numStr === '-' || numStr === '') {
         dashCount++;
       } else {
-        // Ekstrak angka murni
         const numMatch = numStr.match(/\d+/);
         if (numMatch) {
           const num = parseInt(numMatch[0], 10);
-          existSet.add(num);
-          if (num > maxNum) maxNum = num;
+          // Batasi maksimal 2000 untuk mencegah loop berlebih jika nomor bangunan salah input
+          if (num > 0 && num <= 2000) {
+            existSet.add(num);
+            if (num > maxNum) maxNum = num;
+          }
         }
       }
     });
 
-    // Cari nomor yang bolong dari 1 sampai maxNum
     const missing = [];
     for (let i = 1; i <= maxNum; i++) {
       if (!existSet.has(i)) {
@@ -266,16 +280,19 @@ export default function MapSpasial() {
   }, [filteredTitik]);
 
   // =========================================================================
-  // 🗺️ 9. INISIALISASI & RENDER PETA MAPBOX
+  // 9. INISIALISASI & RENDERING MAPBOX
   // =========================================================================
   useEffect(() => {
-    if (!isLoggedIn || map.current) return; 
+    if (!isLoggedIn || map.current || !mapContainer.current) return;
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/light-v11',
-      center: [112.6214, -7.9839], 
-      zoom: 13, pitch: 60, bearing: -20, antialias: true 
+      center: [112.6214, -7.9839],
+      zoom: 13,
+      pitch: 60,
+      bearing: -20,
+      antialias: true
     });
 
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
@@ -284,13 +301,13 @@ export default function MapSpasial() {
       setMapLoaded(true);
 
       map.current.addLayer({
-        'id': '3d-buildings',
-        'source': 'composite',
+        id: '3d-buildings',
+        source: 'composite',
         'source-layer': 'building',
-        'filter': ['==', 'extrude', 'true'],
-        'type': 'fill-extrusion',
-        'minzoom': 15,
-        'paint': {
+        filter: ['==', 'extrude', 'true'],
+        type: 'fill-extrusion',
+        minzoom: 15,
+        paint: {
           'fill-extrusion-color': '#e2e8f0',
           'fill-extrusion-height': ['get', 'height'],
           'fill-extrusion-base': ['get', 'min_height'],
@@ -298,40 +315,42 @@ export default function MapSpasial() {
         }
       });
 
-      map.current.addSource('data-se2026', { type: 'geojson', data: geojsonData });
-      
-      // LAYER TITIK BULAT
+      map.current.addSource('data-se2026', {
+        type: 'geojson',
+        data: geojsonData
+      });
+
       map.current.addLayer({
-        'id': 'titik-se2026',
-        'type': 'circle',
-        'source': 'data-se2026',
-        'paint': {
+        id: 'titik-se2026',
+        type: 'circle',
+        source: 'data-se2026',
+        paint: {
           'circle-radius': 6,
           'circle-color': [
-            'match', ['get', 'status_alias'],
-            'selesai', '#10b981', 
-            'proses', '#f97316',  
-            '#3b82f6'             
+            'match',
+            ['get', 'status_alias'],
+            'selesai', '#10b981',
+            'proses', '#f97316',
+            '#3b82f6'
           ],
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff'
         }
       });
 
-      // LAYER LABEL UNTUK NOMOR BANGUNAN
       map.current.addLayer({
-        'id': 'label-titik-se2026',
-        'type': 'symbol',
-        'source': 'data-se2026',
-        'minzoom': 16, 
-        'layout': {
+        id: 'label-titik-se2026',
+        type: 'symbol',
+        source: 'data-se2026',
+        minzoom: 16,
+        layout: {
           'text-field': ['get', 'nomor_bangunan'],
           'text-size': 11,
           'text-offset': [0, 1.2],
           'text-anchor': 'top',
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
         },
-        'paint': {
+        paint: {
           'text-color': '#ffffff',
           'text-halo-color': '#1e293b',
           'text-halo-width': 2
@@ -339,10 +358,10 @@ export default function MapSpasial() {
       });
 
       map.current.on('click', 'titik-se2026', (e) => {
-        if (!e.features.length) return;
+        if (!e.features?.length) return;
         const coordinates = e.features[0].geometry.coordinates.slice();
         const { nama_usaha, alamat, nomor_bangunan, status_alias, nmkec, nmdesa } = e.features[0].properties;
-        
+
         const popupHTML = `
           <div style="padding: 4px;">
             <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 2px; color: #3b82f6;">
@@ -352,50 +371,65 @@ export default function MapSpasial() {
               STATUS: ${status_alias || 'Belum Diketahui'} <span style="color: #64748b; margin-left: 4px;">| BLOK/NO: ${nomor_bangunan || '-'}</span>
             </div>
             <h3 style="font-weight: 900; color: #1e293b; font-size: 14px; margin: 0 0 4px 0;">${nama_usaha || 'Nama Tidak Tersedia'}</h3>
-            <p style="font-size: 12px; color: #64748b; margin: 0;">${alamat ? alamat : 'Alamat belum diisi'}</p>
+            <p style="font-size: 12px; color: #64748b; margin: 0;">${alamat || 'Alamat belum diisi'}</p>
           </div>
         `;
         new mapboxgl.Popup().setLngLat(coordinates).setHTML(popupHTML).addTo(map.current);
       });
 
-      map.current.on('mouseenter', 'titik-se2026', () => { map.current.getCanvas().style.cursor = 'pointer'; });
-      map.current.on('mouseleave', 'titik-se2026', () => { map.current.getCanvas().style.cursor = ''; });
+      map.current.on('mouseenter', 'titik-se2026', () => {
+        map.current.getCanvas().style.cursor = 'pointer';
+      });
+      map.current.on('mouseleave', 'titik-se2026', () => {
+        map.current.getCanvas().style.cursor = '';
+      });
     });
   }, [isLoggedIn]);
 
-  // Update Data GeoJSON
   useEffect(() => {
     if (mapLoaded && map.current && map.current.getSource('data-se2026')) {
       map.current.getSource('data-se2026').setData(geojsonData);
     }
   }, [geojsonData, mapLoaded]);
 
-  // Update Batas Wilayah Poligon
   useEffect(() => {
     if (mapLoaded && map.current && batasWilayah) {
       const sourceId = 'source-batas-wilayah';
       if (!map.current.getSource(sourceId)) {
         map.current.addSource(sourceId, { type: 'geojson', data: batasWilayah });
-        map.current.addLayer({
-          'id': 'layer-batas-area', 'type': 'fill', 'source': sourceId,
-          'paint': { 'fill-color': '#3b82f6', 'fill-opacity': 0.05 }
-        }, '3d-buildings'); 
-        map.current.addLayer({
-          'id': 'layer-batas-garis', 'type': 'line', 'source': sourceId,
-          'paint': { 'line-color': '#64748b', 'line-width': 1.5, 'line-dasharray': [3, 3] }
-        }, '3d-buildings');
+        map.current.addLayer(
+          {
+            id: 'layer-batas-area',
+            type: 'fill',
+            source: sourceId,
+            paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.05 }
+          },
+          '3d-buildings'
+        );
+        map.current.addLayer(
+          {
+            id: 'layer-batas-garis',
+            type: 'line',
+            source: sourceId,
+            paint: { 'line-color': '#64748b', 'line-width': 1.5, 'line-dasharray': [3, 3] }
+          },
+          '3d-buildings'
+        );
       } else {
         map.current.getSource(sourceId).setData(batasWilayah);
       }
     }
   }, [mapLoaded, batasWilayah]);
 
-  // Efek Highlight Poligon SLS
   useEffect(() => {
     if (mapLoaded && map.current && map.current.getLayer('layer-batas-area')) {
       if (selectedSls) {
         map.current.setPaintProperty('layer-batas-area', 'fill-opacity', [
-          'match', ['get', 'idsubsls'], selectedSls, 0.4, 0.05 
+          'match',
+          ['get', 'idsubsls'],
+          selectedSls,
+          0.4,
+          0.05
         ]);
       } else {
         map.current.setPaintProperty('layer-batas-area', 'fill-opacity', 0.05);
@@ -404,7 +438,7 @@ export default function MapSpasial() {
   }, [selectedSls, mapLoaded]);
 
   // =========================================================================
-  // ✈️ 10. FITUR AUTO-ZOOM (FLY TO BOUNDS)
+  // 10. FITUR AUTO-ZOOM
   // =========================================================================
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
@@ -412,31 +446,34 @@ export default function MapSpasial() {
     const bounds = new mapboxgl.LngLatBounds();
     let hasBounds = false;
 
-    if (geojsonData && geojsonData.features && geojsonData.features.length > 0) {
-      geojsonData.features.forEach(feature => {
-        if (feature.geometry && feature.geometry.coordinates) {
+    if (geojsonData?.features?.length > 0) {
+      geojsonData.features.forEach((feature) => {
+        if (feature.geometry?.coordinates) {
           bounds.extend(feature.geometry.coordinates);
           hasBounds = true;
         }
       });
-    } 
-    else if (batasWilayah && batasWilayah.features) {
+    } else if (batasWilayah?.features) {
       let featuresToFit = [];
       if (selectedSls) {
-        featuresToFit = batasWilayah.features.filter(f => String(f.properties.idsubsls) === String(selectedSls));
+        featuresToFit = batasWilayah.features.filter(
+          (f) => String(f.properties?.idsubsls) === String(selectedSls)
+        );
       } else if (selectedIddesa) {
-        featuresToFit = batasWilayah.features.filter(f => String(f.properties.idsubsls || '').startsWith(selectedIddesa));
+        featuresToFit = batasWilayah.features.filter((f) =>
+          String(f.properties?.idsubsls || '').startsWith(selectedIddesa)
+        );
       }
 
-      featuresToFit.forEach(feature => {
-        if (feature.geometry && feature.geometry.type === 'Polygon') {
-          feature.geometry.coordinates[0].forEach(coord => {
+      featuresToFit.forEach((feature) => {
+        if (feature.geometry?.type === 'Polygon') {
+          feature.geometry.coordinates[0].forEach((coord) => {
             bounds.extend(coord);
             hasBounds = true;
           });
-        } else if (feature.geometry && feature.geometry.type === 'MultiPolygon') {
-          feature.geometry.coordinates.forEach(polygon => {
-            polygon[0].forEach(coord => {
+        } else if (feature.geometry?.type === 'MultiPolygon') {
+          feature.geometry.coordinates.forEach((polygon) => {
+            polygon[0].forEach((coord) => {
               bounds.extend(coord);
               hasBounds = true;
             });
@@ -449,7 +486,7 @@ export default function MapSpasial() {
       map.current.fitBounds(bounds, {
         padding: 80,
         duration: 2000,
-        maxZoom: 18, 
+        maxZoom: 18,
         pitch: 60,
         bearing: -20
       });
@@ -459,9 +496,8 @@ export default function MapSpasial() {
   }, [geojsonData, selectedSls, selectedIddesa, batasWilayah, mapLoaded]);
 
   // =========================================================================
-  // 🎨 RENDER TAMPILAN (LOGIN ATAU PETA)
+  // 11. TAMPILAN ANTARMUKA
   // =========================================================================
-  
   if (!isLoggedIn) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-slate-950 font-sans p-4">
@@ -480,22 +516,29 @@ export default function MapSpasial() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="text-xs font-bold text-slate-400 block mb-1">ID Petugas / Username</label>
-              <input 
-                type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-                placeholder="Masukkan username..." required
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Masukkan username..."
+                required
                 className="w-full bg-slate-950 border border-slate-800 text-white text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 block mb-1">Kata Sandi</label>
-              <input 
-                type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••" required
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
                 className="w-full bg-slate-950 border border-slate-800 text-white text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500"
               />
             </div>
-            <button 
-              type="submit" disabled={isLoadingLogin}
+            <button
+              type="submit"
+              disabled={isLoadingLogin}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/30 text-sm mt-2 flex justify-center items-center gap-2 disabled:opacity-50"
             >
               {isLoadingLogin ? <span className="animate-pulse">Memverifikasi...</span> : 'MASUK KE SISTEM PEMETAAN'}
@@ -508,10 +551,8 @@ export default function MapSpasial() {
 
   return (
     <div className="flex flex-col md:flex-row w-full h-full min-h-screen bg-slate-100 p-4 font-sans relative">
-      
-      {/* 🌟 TOMBOL LOGOUT POJOK KANAN ATAS */}
       <div className="absolute top-6 right-6 z-50">
-        <button 
+        <button
           onClick={handleLogout}
           className="flex items-center gap-2 bg-slate-800 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg border border-slate-700 transition-all"
         >
@@ -519,7 +560,6 @@ export default function MapSpasial() {
         </button>
       </div>
 
-      {/* 🌟 PANEL KIRI (SIDEBAR FILTER) */}
       <div className="w-full md:w-80 bg-white border border-slate-200 flex flex-col shrink-0 z-10 shadow-lg rounded-l-2xl overflow-hidden">
         <div className="p-5 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -536,47 +576,55 @@ export default function MapSpasial() {
         <div className="p-5 flex-1 overflow-y-auto space-y-6">
           <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
             <h3 className="text-xs font-black text-slate-400 tracking-wider mb-2">FILTER WILAYAH (WAJIB)</h3>
-            
+
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700">Kecamatan</label>
-              <select value={selectedKdkec} onChange={handleKecamatanChange} className="w-full text-sm p-2.5 border border-slate-200 rounded-lg bg-white outline-none focus:border-blue-500 transition-all cursor-pointer">
+              <select
+                value={selectedKdkec}
+                onChange={handleKecamatanChange}
+                className="w-full text-sm p-2.5 border border-slate-200 rounded-lg bg-white outline-none focus:border-blue-500 transition-all cursor-pointer"
+              >
                 <option value="">-- Pilih Kecamatan --</option>
-                {listKecamatan.map((kec) => (
-                  <option key={kec.kdkec} value={kec.kdkec}>{kec.nmkec}</option>
-                ))}
+                {Array.isArray(listKecamatan) &&
+                  listKecamatan.map((kec) => (
+                    <option key={kec.kdkec} value={kec.kdkec}>
+                      {kec.nmkec}
+                    </option>
+                  ))}
               </select>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700">Desa / Kelurahan</label>
-              <select 
-                value={selectedIddesa} 
+              <select
+                value={selectedIddesa}
                 onChange={(e) => {
                   setSelectedIddesa(e.target.value);
-                  setDataTitik([]); 
-                  setSelectedSls(''); 
+                  setDataTitik([]);
+                  setSelectedSls('');
                 }}
-                disabled={!selectedKdkec} 
+                disabled={!selectedKdkec}
                 className="w-full text-sm p-2.5 border border-slate-200 rounded-lg bg-white outline-none focus:border-blue-500 transition-all cursor-pointer disabled:bg-slate-100 disabled:text-slate-400"
               >
-                <option value="">{selectedKdkec ? "-- Pilih Desa --" : "Pilih Kecamatan Dulu"}</option>
-                {listKelurahan.map((desa) => (
-                  <option key={desa.iddesa} value={desa.iddesa}>{desa.nmdesa}</option>
-                ))}
+                <option value="">{selectedKdkec ? '-- Pilih Desa --' : 'Pilih Kecamatan Dulu'}</option>
+                {Array.isArray(listKelurahan) &&
+                  listKelurahan.map((desa) => (
+                    <option key={desa.iddesa} value={desa.iddesa}>
+                      {desa.nmdesa}
+                    </option>
+                  ))}
               </select>
             </div>
 
-            {/* 🌟 DROPDOWN SLS DENGAN GRUP RW */}
             <div className="space-y-1.5 mt-2">
               <label className="text-xs font-bold text-slate-700">Satuan Lingkungan Setempat (SLS)</label>
-              <select 
-                value={selectedSls} 
+              <select
+                value={selectedSls}
                 onChange={(e) => setSelectedSls(e.target.value)}
-                disabled={groupedSlsList.length === 0} 
+                disabled={groupedSlsList.length === 0}
                 className="w-full text-sm p-2.5 border border-slate-200 rounded-lg bg-white outline-none focus:border-blue-500 transition-all cursor-pointer disabled:bg-slate-100 disabled:text-slate-400"
               >
-                <option value="">{groupedSlsList.length > 0 ? "-- Semua SLS --" : "Pilih Kelurahan Dulu"}</option>
-                
+                <option value="">{groupedSlsList.length > 0 ? '-- Semua SLS --' : 'Pilih Kelurahan Dulu'}</option>
                 {groupedSlsList.map((group, groupIdx) => (
                   <optgroup key={groupIdx} label={`--- ${group.rwLabel} ---`} className="font-bold text-slate-500 bg-slate-50">
                     {group.items.map((sls) => (
@@ -589,74 +637,87 @@ export default function MapSpasial() {
               </select>
             </div>
 
-            <button 
+            <button
               onClick={handleMuatData}
               disabled={!selectedIddesa || isLoading}
               className={`w-full mt-4 flex justify-center items-center gap-2 p-3 rounded-lg text-sm font-bold transition-all ${
-                !selectedIddesa ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/30'
+                !selectedIddesa
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/30'
               }`}
             >
-              {isLoading ? <span className="animate-pulse">Menarik Kordinat...</span> : <><Database size={16} /> MUAT DATA SPASIAL</>}
+              {isLoading ? (
+                <span className="animate-pulse">Menarik Koordinat...</span>
+              ) : (
+                <>
+                  <Database size={16} /> MUAT DATA SPASIAL
+                </>
+              )}
             </button>
-            
+
             {!selectedIddesa && (
               <p className="text-[10px] text-rose-500 flex items-center gap-1 font-bold mt-2">
                 <AlertTriangle size={10} /> *Pilih hingga level desa untuk memuat
               </p>
             )}
           </div>
-          
+
           {dataTitik.length > 0 && (
-             <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl">
-               <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Status Radar</p>
-               <p className="text-2xl font-black text-emerald-700">{dataTitik.length.toLocaleString('id-ID')} <span className="text-sm font-semibold">Titik Termuat</span></p>
-             </div>
+            <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl">
+              <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Status Radar</p>
+              <p className="text-2xl font-black text-emerald-700">
+                {dataTitik.length.toLocaleString('id-ID')}{' '}
+                <span className="text-sm font-semibold">Titik Termuat</span>
+              </p>
+            </div>
           )}
         </div>
       </div>
 
-      {/* 🌟 PANEL KANAN (MAP CONTAINER) */}
       <div className="flex-1 h-[80vh] md:h-auto w-full relative border border-slate-200 rounded-r-2xl overflow-hidden shadow-lg">
         <div ref={mapContainer} className="w-full h-full absolute inset-0" />
-        
-        {/* 🌟 FLOATING PANEL: REKAPITULASI NOMOR BANGUNAN (Tampil Saat Data Dimuat) */}
+
         {filteredTitik.length > 0 && (
           <div className="absolute bottom-6 right-10 z-[1000] bg-slate-900/95 backdrop-blur-md border border-slate-700 p-5 rounded-2xl shadow-2xl w-80 max-h-[50vh] flex flex-col pointer-events-auto">
             <h3 className="text-sm font-black text-white flex items-center gap-2 mb-3 border-b border-slate-700/50 pb-2">
               <Info className="text-amber-500" size={16} />
               Radar Kelengkapan Bangunan
             </h3>
-            
+
             <div className="space-y-4 overflow-y-auto flex-1 pr-2">
-              
-              {/* Indikator 1: Bangunan Tanpa Nomor (-) */}
               <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Bangunan Tanpa Nomor (-)</p>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
+                  Bangunan Tanpa Nomor (-)
+                </p>
                 <div className="flex items-center justify-between">
                   <span className="text-2xl font-black text-amber-400">{rekapBangunan.dashCount}</span>
                   <span className="text-[10px] bg-slate-900 text-slate-400 px-2 py-1 rounded-md">Titik</span>
                 </div>
               </div>
 
-              {/* Indikator 2: Deteksi Nomor Bolong */}
               <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Nomor Bangunan Terlewat</p>
-                <p className="text-[10px] text-slate-500 mb-2">Tertinggi tercatat: <span className="text-blue-400 font-bold">No. {rekapBangunan.maxNum}</span></p>
-                
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
+                  Nomor Bangunan Terlewat
+                </p>
+                <p className="text-[10px] text-slate-500 mb-2">
+                  Tertinggi tercatat: <span className="text-blue-400 font-bold">No. {rekapBangunan.maxNum}</span>
+                </p>
+
                 {rekapBangunan.missing.length === 0 ? (
                   <div className="bg-emerald-500/10 text-emerald-400 text-xs p-2 rounded-lg font-bold text-center border border-emerald-500/20">
                     Semua Urutan Lengkap!
                   </div>
                 ) : (
                   <div className="bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg">
-                    <p className="text-[10px] font-bold text-rose-400 mb-1">Terdeteksi {rekapBangunan.missing.length} nomor hilang:</p>
+                    <p className="text-[10px] font-bold text-rose-400 mb-1">
+                      Terdeteksi {rekapBangunan.missing.length} nomor hilang:
+                    </p>
                     <p className="text-[11px] font-mono text-slate-300 break-words leading-relaxed max-h-24 overflow-y-auto">
                       {rekapBangunan.missing.join(', ')}
                     </p>
                   </div>
                 )}
               </div>
-
             </div>
           </div>
         )}
